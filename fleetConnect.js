@@ -1,57 +1,68 @@
-console.log('UNIQUE_CONNECT_JS_STARTED - This is connect.js running');
 const awsIot = require('aws-iot-device-sdk');
 const path = require('path');
 const Telemetry = require('./models/Telemetry');
 
-console.log('connect is running')
-
-class MqttConnect {
-    constructor(){
+class FleetConnect {
+    constructor() {
         this.device = null;
+        this.clientId = 'msm-backend';
         this.topics = [
-            'msm/ESP90000005/telemetry'
-        ]
+            'msm/+/telemetry'
+        ];
+        this.connectedDevices = new Map();  // Track connected devices
         this.connect();
     }
 
-    // Method to publish messages
-    publish(topic, message, options = { qos: 1 }) {
-        if (!this.device) {
-            throw new Error('MQTT client not connected');
-        }
-        return new Promise((resolve, reject) => {
-            this.device.publish(topic, JSON.stringify(message), options, (err) => {
-                if (err) return reject(err);
-                resolve();
-            });
-        });
-    }
-
     connect() {
-        this.device = awsIot.device({
-            keyPath: path.join(__dirname, './things/ESP90000005/ESP90000005.private.key'),
-            certPath: path.join(__dirname, './things/ESP90000005/ESP90000005.cert.pem'),
-            caPath: path.join(__dirname, './things/AmazonRootCA1.pem.txt'),
-            clientId: process.env.AWS_IOT_CLIENT_ID || 'msm-backend',
-            host: process.env.AWS_IOT_ENDPOINT,
-            debug: process.env.NODE_ENV === 'development'
-        });
+        console.log('Connecting to AWS IoT...');        
+        try {
+            this.device = awsIot.device({
+                keyPath: path.join(__dirname, './things/ESP90000005/ESP90000005.private.key'),
+                certPath: path.join(__dirname, './things/ESP90000005/ESP90000005.cert.pem'),
+                caPath: path.join(__dirname, './things/AmazonRootCA1.pem.txt'),
+                clientId: this.clientId,
+                host: process.env.AWS_IOT_ENDPOINT,
+                debug: true,
+                protocol: 'mqtts',
+                port: 8883,
+                reconnectPeriod: 10000, // 10 seconds
+                clean: true,
+                keepalive: 30, // 30 seconds
+                resubscribe: true
+            });
 
-        this.device.on('connect', () => {
-            this._isConnected = true;
-            console.log('Connected to AWS IoT Core');
-        });
+            // Setup event handlers
+            this.device.on('connect', () => {
+                console.log('✅ Connected to AWS IoT Core');
+            });
 
-        this.device.subscribe(this.topics, (err, granted) => {
-            if (err) {
-                console.error('Subscription error:', err);
-            } else {
-                console.log('Subscribed to:', granted.map(g => g.topic));
-            }
-        });
+            this.device.subscribe(this.topics, (err, granted) => {
+                if (err) {
+                    console.error('Subscription error:', err);
+                } else {
+                    console.log('Subscribed to:', granted.map(g => g.topic));
+                }
+            });
 
+            this.device.on('error', (error) => {
+                console.error('❌ MQTT Error:', error);
+                if (error.code) console.error('Error code:', error.code);
+                if (error.stack) console.error(error.stack);
+            });
 
-        this.device.on('message', async (topic, payload) => {
+            this.device.on('offline', () => {
+                console.log('⚠️  Disconnected from AWS IoT');
+            });
+
+            this.device.on('close', () => {
+                console.log('🔌 Connection closed');
+            });
+
+            this.device.on('reconnect', () => {
+                console.log('🔄 Attempting to reconnect...');
+            });
+
+      this.device.on('message', async (topic, payload) => {
             try {
                 const message = JSON.parse(payload.toString());
                 console.log(`Received message on ${topic}:`, message);
@@ -116,24 +127,23 @@ class MqttConnect {
                 console.error('Error processing message:', error);
             }
         });
-    
-        this.device.on('subscribe', (topic) => {
-            console.log(`Subscribed to ${topic}`);
-        });
-    
-        this.device.on('offline', () => {
-            this._isConnected = false;
-            console.log('MQTT client went offline');
-        });
-    
-        this.device.on('error', (error) => {
-            console.error('MQTT Error:', error);
-            this._isConnected = false;
-        });
+
+        } catch (error) {
+            console.error('❌ Failed to initialize MQTT client:', error);
+            throw error;
+        }
     }
+
+    disconnect() {
+        if (this.device) {
+            console.log('Disconnecting...');
+            this.device.end();
+        }
+    }
+
+
+
 }
 
-
-// Export a singleton instance
-const mqttClient = new MqttConnect();
+const mqttClient = new FleetConnect();
 module.exports = mqttClient;
