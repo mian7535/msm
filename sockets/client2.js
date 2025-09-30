@@ -15,6 +15,8 @@ socket.on("connect", () => {
   // test event
   socket.emit("hello", { msg: "Hi from client!" });
 
+  socket.emit("mqtt_protocol" , { thing_name : "ESP90000005" , interval_time : 1000 , data_range : 10 });
+
   socket.on("mqtt_protocol" , (data) => {
     console.log("mqtt_protocol from server:", data);
   });
